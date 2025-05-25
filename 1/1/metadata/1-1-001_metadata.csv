@@ -1,0 +1,14 @@
+timestamp_unix,timestamp_iso,time_offset,timezone_location,mobile_platform,mobile_platform_version,mobile_app,mobile_app_version,algo_version,embrace_fw_version,cdp_version
+1741636528523,2025-03-10T19:55:28Z,,,android,,com.empatica.healthmonitor.lab,5.49.1,11.8.0,,v3.12.0
+1741636787329,2025-03-10T19:59:47Z,,,,,,,,4.37.2,
+1741636940463,2025-03-10T20:02:20Z,-14400,America/New_York,,,,,,,
+1741653452746,2025-03-11T00:37:32Z,-14400,America/New_York,,,,,,,
+1741653452816,2025-03-11T00:37:32Z,,,ios,,com.empatica.healthmonitor.lab,5.49.1,11.8.0,,
+1741653481427,2025-03-11T00:38:01Z,,,,,,,,4.37.2,
+1741660365662,2025-03-11T02:32:45Z,,,ios,,com.empatica.healthmonitor.lab,5.49.1,11.8.0,,
+1741660522813,2025-03-11T02:35:22Z,,,android,,com.empatica.healthmonitor.lab,5.49.1,11.8.0,,
+1741660539819,2025-03-11T02:35:39Z,,,,,,,,4.37.2,
+1741711154668,2025-03-11T16:39:14Z,,,android,,com.empatica.healthmonitor.lab,5.49.1,11.8.0,,
+1741711174381,2025-03-11T16:39:34Z,,,,,,,,4.37.2,
+1741720315484,2025-03-11T19:11:55Z,,,android,,com.empatica.healthmonitor.lab,5.49.1,11.8.0,,
+1741720371591,2025-03-11T19:12:51Z,,,,,,,,4.37.2,

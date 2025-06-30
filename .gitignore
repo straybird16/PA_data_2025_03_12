@@ -1,6 +1,15 @@
 video/
 .venv/
 *.mp4
+*.png
+*.jpg
+*.jpeg
+*.gif
 archive
+*archive*/
 *signals*
+*signals*/
 *log*
+*log*/
+*self_report*/
+*2025-03-12*/

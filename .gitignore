@@ -1,3 +1,6 @@
 video/
 .venv/
 *.mp4
+archive
+*signals*
+*log*

@@ -210,34 +210,6 @@ class BaseTabularDataset(Dataset):
         Y = torch.tensor(Y_arr, dtype=torch.float32)
         return X, Y
 
-    """ def split(
-        self,
-        test_size: float = 0.2,
-        val_size: Optional[float] = None,
-        stratify_by: Optional[str] = None,
-        random_state: int = 42
-    ):
-        #Split into train/test or train/val/test, preserving transforms/scaler.
-        subset = self.df.iloc[self.indices]
-        # Choose split method
-        if stratify_by:
-            splitter = StratifiedShuffleSplit(1, test_size=test_size, random_state=random_state)
-            train_idx, test_idx = next(splitter.split(subset, subset[stratify_by]))
-        else:
-            train_idx, test_idx = train_test_split(range(len(subset)), test_size=test_size, random_state=random_state)
-        # Map back to absolute indices
-        train_abs = [self.indices[i] for i in train_idx]
-        test_abs = [self.indices[i] for i in test_idx]
-        # Create child datasets
-        train_ds = self._clone(indices=train_abs)
-        test_ds = self._clone(indices=test_abs)
-        # Optionally split validation
-        if val_size is not None:
-            val_frac = val_size / (1 - test_size)
-            train_ds, val_ds = train_ds.split(test_size=val_frac, val_size=None, # type: ignore
-                                              stratify_by=stratify_by, random_state=random_state)
-            return train_ds, val_ds, test_ds
-        return train_ds, test_ds """
 
     def apply_scaling(self, method: str = 'standard', columns: Optional[List[str]] = None, fit: bool = True):
         """Fit or apply a scaler, returns new dataset with scaled values."""
@@ -370,63 +342,6 @@ class BaseSlidingWindowDataset(Dataset):
         return X, y
 
 
-    def split( # type: ignore
-        self,
-        test_size: float = 0.2,
-        val_size: Optional[float] = None,
-        stratify_by: Optional[str] = None,
-        split_by: Optional[List[str]] = None,
-        random_state: int = 42
-    ) -> Union[
-        Tuple['BaseSlidingWindowDataset', 'BaseSlidingWindowDataset'],
-        Tuple['BaseSlidingWindowDataset', 'BaseSlidingWindowDataset', 'BaseSlidingWindowDataset']
-    ]:
-        """
-        Split windows into train/test (or train/val/test).
-        - split_by: list of raw-data columns (e.g. ['Mode']) to group windows by the Mode
-                    value at the *end* of each window.
-        - stratify_by: a raw-data column for stratified splits (again, at window end).
-        """
-        n = len(self.window_indices)
-        # Determine train/test window indices
-        if split_by:
-            # get group key at each window's end
-            ends = [tgt for (_, tgt) in self.window_indices]
-            df_end = self.df.iloc[ends]
-            groups = df_end[split_by].apply(tuple, axis=1)
-            uniq = groups.unique().tolist()
-            train_g, test_g = train_test_split(uniq, test_size=test_size, random_state=random_state, shuffle=False)
-            train_locs = np.where(groups.isin(train_g))[0]
-            test_locs  = np.where(groups.isin(test_g))[0]
-        else:
-            if stratify_by:
-                ends = [tgt for (_, tgt) in self.window_indices]
-                df_end = self.df.iloc[ends]
-                splitter = StratifiedShuffleSplit(1, test_size=test_size, random_state=random_state)
-                train_locs, test_locs = next(
-                    splitter.split(np.zeros(n), df_end[stratify_by])
-                )
-            else:
-                train_locs, test_locs = train_test_split(
-                    list(range(n)), test_size=test_size, random_state=random_state
-                )
-
-        train_w = [self.window_indices[i] for i in train_locs]
-        test_w  = [self.window_indices[i] for i in test_locs]
-        train_ds = self._clone_windows(train_w)
-        test_ds  = self._clone_windows(test_w)
-
-        if val_size is not None:
-            # further split train into train/val
-            val_frac = val_size / (1 - test_size)
-            train_ds, val_ds = train_ds.split( # type: ignore
-                test_size=val_frac, val_size=None,
-                stratify_by=stratify_by, split_by=split_by,
-                random_state=random_state
-            )
-            return train_ds, val_ds, test_ds
-
-        return train_ds, test_ds
 
     def _clone_windows(self, window_indices: List[Tuple[List[int], int]]):
         """Internal: make a new dataset copying config but with a subset of windows."""
@@ -442,6 +357,7 @@ class BaseSlidingWindowDataset(Dataset):
     
     def split(
         self,
+        split_func: Optional[Callable] = None,
         test_size: float = 0.2,
         val_size: Optional[float] = None,
         stratify_by: Optional[str] = None,
@@ -451,12 +367,15 @@ class BaseSlidingWindowDataset(Dataset):
         """
         Split dataset into train/test (or train/val/test).
 
+        - split_func: custom function to determine train/test splits. Ignore other params if set.
         - split_by: raw-data columns to group windows by value at window end index.
         - stratify_by: raw-data column to stratify by at window end index.
         """
         n = len(self.y)
+        if split_func is not None:
+            train_idxs, test_idxs = split_func(self.df, self.window_indices)
         # Determine indices 0..n-1 for each split
-        if split_by:
+        elif split_by:
             ends = [tgt for (_, tgt) in self.window_indices]
             df_end = self.df.iloc[ends]
             groups = df_end[split_by].apply(tuple, axis=1)

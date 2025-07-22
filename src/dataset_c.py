@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 import torch
+import sklearn
+
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
@@ -77,6 +79,7 @@ class BaseTabularDataset(Dataset):
     ):
         # Load raw data
         self.df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+        self.raw_data = self.df.copy()  # keep original data for reference
         if self.df.empty:
             raise ValueError("Empty input data provided.")
 
@@ -267,9 +270,11 @@ class BaseSlidingWindowDataset(Dataset):
         feature_fn: Optional[Callable[[pd.DataFrame], np.ndarray]] = None,
         label_fn: Optional[Callable[[pd.DataFrame, int], Any]] = None,
         window_filter: Optional[Callable[[pd.DataFrame], bool]] = None,
+        use_raw_signals: bool = False,
     ):
         super().__init__()
         self.df = data.sort_values(timestamp_col).reset_index(drop=True)
+        self.raw_df = self.df.copy()  # keep original data for reference
         self.timestamp_col = timestamp_col
         self.window_size = window_size
         self.horizon = horizon
@@ -280,11 +285,13 @@ class BaseSlidingWindowDataset(Dataset):
         self.target_features = target_features or []
         self.transform = transform or {}
         
-        self.feature_fn = feature_fn or (lambda x: x)
+        self.use_raw_signals = use_raw_signals  # whether to use raw signals in feature_fn
+        self.feature_fn = (lambda x: x[self.source_features].values) if (use_raw_signals or feature_fn is None) else feature_fn
         self.label_fn = label_fn or (lambda x, y: x)
         self.window_filter = window_filter or (lambda x: True)  # default filter that accepts all windows
 
         self.window_indices = self._generate_window_indices() # precompute indices
+        self.process_nan(nan_strategy='interpolate')  # handle NaNs in self.df
         self._precompute_all()
 
     def _generate_window_indices(self) -> List[Tuple[List[int], int]]:
@@ -320,7 +327,7 @@ class BaseSlidingWindowDataset(Dataset):
             features.append(X_vec)
             labels.append(y_val)
         
-        self.X, self.y = np.vstack(features), np.array(labels)
+        self.X, self.y = np.stack(features), np.array(labels)
         return self.X, self.y
 
     def __len__(self):
@@ -419,12 +426,14 @@ class BaseSlidingWindowDataset(Dataset):
         
     def apply_scaling(
         self,
-        method: str = 'standard',
+        method: Literal['standard', 'minmax', 'robust'] = 'standard',
         fit: bool = True,
-        scaler: Any = None
+        scaler: Optional[Union[StandardScaler, MinMaxScaler, RobustScaler]] = None
     ):
         """
         Fit or apply a scaler to self.X in place.
+        If data is high-dimensional, its shape will be stored before it is flattened and transformed;
+            after the transformation, it will be restored to its original shape.
 
         :param method: 'standard'|'minmax'|'robust'
         :param fit:    True to fit new scaler on X; False to reuse existing
@@ -436,6 +445,11 @@ class BaseSlidingWindowDataset(Dataset):
         }
         if method not in scaler_map:
             raise ValueError(f"Unknown scaler method: {method}")
+        # Store original shape if needed
+        original_shape = self.X.shape
+        if len(original_shape) > 2:
+            # Flatten to 2D for scaling
+            self.X = self.X.reshape(-1, original_shape[-1])
         # Decide which scaler instance to use
         if fit:
             self.scaler = scaler_map[method]()
@@ -445,31 +459,37 @@ class BaseSlidingWindowDataset(Dataset):
                 raise ValueError("must pass `scaler=` when fit=False")
             self.scaler = scaler
             self.X = self.scaler.transform(self.X)
-            
+
+        # Restore original shape
+        if len(original_shape) > 2:
+            self.X = self.X.reshape(original_shape)
+
     def process_nan(
         self,
-        nan_strategy: 'Literal["interpolate", "zero", "none"]' = 'zero',
-        nan_interp_method: 'Literal["linear", "time", "index", "values", "nearest", "zero", "slinear"]' = 'linear'
+        nan_strategy: Literal["interpolate", "zero", "none"] = 'zero',
+        nan_interp_method: Literal["linear", "time", "index", "values", "nearest", "zero", "slinear"] = 'linear'
     ):
-        if nan_strategy == 'interpolate':
-            dfX = pd.DataFrame(self.X)
-            self.X = dfX.interpolate(method=nan_interp_method, axis=0)
+        if nan_strategy.lower() == 'interpolate':
+            #dfX = pd.DataFrame(self.raw_df[self.source_features].values, columns=self.source_features)
+            self.df = self.df.interpolate(method=nan_interp_method, axis=0,limit_direction='both')
             # fill any remaining NaNs
             #self.X = self.X.fillna(method='bfill').fillna(method='ffill').values
-        elif nan_strategy == 'zero':
-            self.X = np.nan_to_num(self.X, nan=0.0)
+        elif nan_strategy.lower() == 'zero':
+            self.df = self.raw_df[self.source_features].fillna(0)
+        elif nan_strategy.lower() == 'none':
+            self.df = self.raw_df[self.source_features]
 
 
 class BiomedicalPainDataset(BaseSlidingWindowDataset):
-    """
-    Processes biomedical signals and pain reports into sliding windows.
-    Adds time/frequency domain and EDA tonic/phasic features.
-    """
+    
+    #Processes biomedical signals and pain reports into sliding windows.
+    #Adds time/frequency domain and EDA tonic/phasic features.
+   
     def __init__(
         self,
         signals_df: pd.DataFrame,
         pain_df: pd.DataFrame,
-        window_duration: float,
+        window_size: float,
         step_size: float,
         signal_columns: List[str],
         timestamp_col: str='timestamp',
@@ -479,7 +499,8 @@ class BiomedicalPainDataset(BaseSlidingWindowDataset):
         include_time_domain: bool = True,
         tonic_cutoff: float = 0.05,
         include_tonic_phasic: bool = True,
-        window_filter: Optional[Callable[[pd.DataFrame], bool]] = None
+        window_filter: Optional[Callable[[pd.DataFrame], bool]] = None,
+        use_raw_signals: bool = False,
     ):
         # Prepare signals and reports
         signals = signals_df.copy()
@@ -490,12 +511,11 @@ class BiomedicalPainDataset(BaseSlidingWindowDataset):
         reports = reports.dropna(subset=['PainLevel']).sort_values('timestamp').reset_index(drop=True)
         self.reports =  reports
         # calculate window params in samples
-        window_size = int(window_duration * resample_freq)
+        self.window_size = int(window_size * resample_freq)
         step = int(step_size * resample_freq)
         # Sort signals
         data = signals.sort_values('timestamp').reset_index(drop=True)
-        window_size = int(window_duration * resample_freq)
-        step = int(step_size * resample_freq)
+        
         
         # define feature and label functions
         def feature_fn(win_df: pd.DataFrame) -> np.ndarray:
@@ -531,8 +551,17 @@ class BiomedicalPainDataset(BaseSlidingWindowDataset):
             return np.concatenate(feats_all)
 
         def label_fn(df: pd.DataFrame, tgt_idx: int) -> int:
+            
+            #Compute pain label based on the last report before the target index.
+            #If the most recent report is more than 1 minute before the target timestamp,
+            # or if the mode is 0, set to 0.
+            #Otherwise, categorize the pain level into 3 classes:
             t = df.iloc[tgt_idx]['timestamp']
             past = self.reports[self.reports['timestamp']<=t]
+            mode = self.signals.iloc[tgt_idx]['mode'] if 'mode' in self.signals.columns else None
+            most_recent = past.iloc[-1] if not past.empty else None
+            if most_recent is None or mode==0 or (t - most_recent['timestamp']).total_seconds() > 60:
+                return 0
             level = past['PainLevel'].iloc[-1] if not past.empty else 0.0
             # categorize
             if level == 0: return 0
@@ -542,7 +571,7 @@ class BiomedicalPainDataset(BaseSlidingWindowDataset):
         super().__init__(
             data=data,
             timestamp_col=timestamp_col,
-            window_size=window_size,
+            window_size=self.window_size,
             horizon=1,
             step_size=step,
             window_type='fixed',
@@ -552,12 +581,13 @@ class BiomedicalPainDataset(BaseSlidingWindowDataset):
             feature_fn=feature_fn,
             label_fn=label_fn,
             window_filter=window_filter,
+            use_raw_signals=use_raw_signals,
         )
         self.resample_freq = resample_freq
-        self.bandpass_freqs = bandpass_freqs if bandpass_freqs is not None else (0.5, 40)
+        self.bandpass_freqs = bandpass_freqs or (0.5, 40)
         self.freq_bands = freq_bands
         self.include_time_domain = include_time_domain
-        self.tonic_cutoff = tonic_cutoff if tonic_cutoff is not None else 0.05
+        self.tonic_cutoff = tonic_cutoff or 0.05
         self.include_tonic_phasic = include_tonic_phasic
         self.signal_columns = signal_columns
         self.feature_fn = feature_fn
@@ -579,6 +609,10 @@ class BiomedicalPainDataset(BaseSlidingWindowDataset):
         return feats
     
     def _generate_feature_names(self) -> List[str]:
+        if self.use_raw_signals:
+            # If using raw signals, feature names are just the signal columns
+            self.feature_names = self.signal_columns.copy()
+            return self.feature_names
         names: List[str] = []
         # Tonic & Phasic
         if self.include_tonic_phasic:
@@ -600,6 +634,9 @@ class BiomedicalPainDataset(BaseSlidingWindowDataset):
         return names
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        X = torch.tensor(np.array(self.X)[idx], dtype=torch.float32)
+        Y = torch.tensor(np.array(self.y)[idx], dtype=torch.long)
+        return X, Y
         idxs, tgt = self.window_indices[idx]
         win_df = self.df.iloc[idxs]
         times = win_df['timestamp'].astype('int64').to_numpy(dtype=float) / 1e9
@@ -660,8 +697,14 @@ class BiomedicalPainDataset(BaseSlidingWindowDataset):
         return feats
 
     def _compute_pain_label(self, end_time: pd.Timestamp) -> float:
+        # Compute the pain level based on the last report before the end_time.
+        # If most recent report is more than 1 minute before end_time, or no reports exist, or the most recent report is in different mode,
+        # return 0.0.
+        # Otherwise, return the last PainLevel value.
+
         past = self.reports[self.reports['timestamp']<=end_time]
-        if past.empty:
+        most_recent = past.iloc[-1] if not past.empty else None
+        if past.empty or (end_time - most_recent['timestamp']).total_seconds() > 60: #or most_recent["mode"] != self.df.iloc[-1]["mode"]: #type: ignore
             return 0.0
         return past.iloc[-1]['PainLevel']
 
@@ -674,7 +717,7 @@ class BiomedicalPainDataset(BaseSlidingWindowDataset):
             return 2
         
     def _clone_windows(self, window_indices: List[Tuple[List[int], int]]):
-        """Internal: make a new dataset copying config but with a subset of windows."""
+        # Internal: make a new dataset copying config but with a subset of windows.
         new = self.__class__.__new__(self.__class__)
         # copy attributes
         for attr in (
@@ -703,3 +746,5 @@ class BiomedicalPainDataset(BaseSlidingWindowDataset):
             ds.X = self.X[idxs]
             ds.y = self.y[idxs]
             return ds
+
+

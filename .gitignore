@@ -1,4 +1,5 @@
 video/
+experiments/
 .venv/
 *.mp4
 *.png
@@ -14,3 +15,7 @@ archive
 *self_report*/
 *2025-03-12*/
 1/
+*.csv
+*.feather
+*.json
+*.pkl

@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 import sklearn
+import time
 
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
@@ -295,12 +296,14 @@ class BaseSlidingWindowDataset(Dataset):
         self._precompute_all()
 
     def _generate_window_indices(self) -> List[Tuple[List[int], int]]:
+        print("Generating sliding window indices...")
         seq_len = len(self.df)
         windows = []
         # Generate indices for sliding windows
         if self.window_type not in ['fixed', 'cumulative']:
             raise ValueError(f"Unknown window type '{self.window_type}'")
         for start in range(0, seq_len - self.window_size - self.horizon + 1, self.step_size):
+            print(f"Generating window starting at index {start}...")
             end = start + self.window_size
             if self.window_type == 'fixed':
                 idxs = list(range(start, end, self.stride))
@@ -311,19 +314,30 @@ class BaseSlidingWindowDataset(Dataset):
             target_idx = end + self.horizon - 1 #
             
             win_df = self.df.iloc[idxs]
+            print(f"Window indices: {idxs}, target index: {target_idx}")
+            print("Applying window filter...")
             if not self.window_filter(win_df):
                 continue
             windows.append((idxs, target_idx))
+            print(f"Accepted window: {idxs} -> {target_idx}")
         
         self.window_indices = windows
         return windows
 
     def _precompute_all(self) -> Tuple[np.ndarray, np.ndarray]:
+        print("Precomputing features and labels for all windows...")
         features, labels = [], []
-        for idxs, tgt in self.window_indices:
+        for i, (idxs, tgt) in enumerate(self.window_indices):
+            print(f"Processing window {i+1}/{len(self.window_indices)}...")
             win_df = self.df.iloc[idxs]
+            start = time.time()
+            # Apply feature function to the window DataFrame
             X_vec = self.feature_fn(win_df)
+            print(f"Feature extraction took {time.time() - start:.2f} seconds")
+            # Apply label function to the target index
+            start = time.time()
             y_val = self.label_fn(self.df, tgt)
+            print(f"Label extraction took {time.time() - start:.2f} seconds")
             features.append(X_vec)
             labels.append(y_val)
         

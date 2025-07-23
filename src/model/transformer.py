@@ -187,7 +187,7 @@ class TransformerClassifier(BaseEstimator, ClassifierMixin):
         self
         """
         # Prepare data loader
-        X_t = torch.tensor(X, dtype=torch.float32, device=self.device)
+        X_t = torch.tensor(X, dtype=torch.float32, device='cpu')  # Use CPU for initial data loading
         dataset = TensorDataset(X_t)
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
@@ -196,6 +196,8 @@ class TransformerClassifier(BaseEstimator, ClassifierMixin):
         for epoch in range(pretrain_epochs):
             total_loss = 0.0
             for (xb,) in loader:
+                # load batch to device
+                xb = xb.to(self.device)
                 self.optimizer.zero_grad()
                 batch_loss = 0.0
                 # For each task, compute loss
@@ -241,8 +243,9 @@ class TransformerClassifier(BaseEstimator, ClassifierMixin):
         --------
         self
         """
-        X_t = torch.tensor(X, dtype=torch.float32, device=self.device)
-        y_t = torch.tensor(y, dtype=torch.long, device=self.device)
+        # Use CPU for initial data loading
+        X_t = torch.tensor(X, dtype=torch.float32, device='cpu')
+        y_t = torch.tensor(y, dtype=torch.long, device='cpu')  
         dataset = TensorDataset(X_t, y_t)
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
@@ -254,6 +257,10 @@ class TransformerClassifier(BaseEstimator, ClassifierMixin):
         for epoch in range(self.epochs):
             total_loss = 0.0
             for xb, yb in loader:
+                # Move batch to device
+                xb = xb.to(self.device)
+                yb = yb.to(self.device)
+                # Zero gradients, forward pass, compute loss, backward pass, step optimizer
                 self.optimizer.zero_grad()
                 logits = self.model(xb, task='classify')
                 loss = self.classification_loss(logits, yb)
